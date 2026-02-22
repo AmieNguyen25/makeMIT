@@ -30,8 +30,10 @@ class SmartTrashBin:
             history=500, varThreshold=50, detectShadows=True
         )
         self.last_classification_time = 0
-        self.cooldown_period = 5.0  # 5 seconds
-        self.motion_threshold = 5000  # Minimum contour area for motion detection
+        self.cooldown_period = 2.0  # 5 seconds
+        self.motion_threshold = 4000  # Minimum contour area for motion detection
+        self.motion_delay = 1.5  # Delay after motion detection before classification
+        self.motion_first_detected = 0  # When motion was first detected
         
     def initialize_camera(self):
         """Initialize webcam"""
@@ -185,6 +187,7 @@ Do not explain."""
         print("=" * 60)
         print(" Live webcam preview active")
         print(" Motion detection enabled")
+        print(f" {self.motion_delay}s delay after motion detection")
         print(" 5-second cooldown between classifications")
         print(" Press 'q' to quit")
         print("=" * 60)
@@ -207,36 +210,58 @@ Do not explain."""
                 display_frame = frame.copy()
                 
                 if motion_detected:
+                    # Record when motion was first detected
+                    current_time = time.time()
+                    if self.motion_first_detected == 0:
+                        self.motion_first_detected = current_time
+                        print(f"\n Motion detected! Waiting {self.motion_delay}s for object to settle...")
+                    
                     # Draw motion contours
                     cv2.drawContours(display_frame, contours, -1, (0, 255, 0), 2)
-                    cv2.putText(display_frame, "MOTION DETECTED", (10, 30), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                     
-                    # Classify if not in cooldown
-                    if not self.is_in_cooldown():
-                        print(f"\n Motion detected! Capturing frame #{frame_count}")
-                        
-                        # Classify the object
-                        result = self.classify_object(frame)
-                        self.last_classification_time = time.time()
-                        
-                        # Print results
-                        timestamp = datetime.now().strftime("%H:%M:%S")
-                        if result['classification'] != 'error':
-                            print(f" [{timestamp}] Classification: {result['classification'].upper()}")
-                            print(f"  Processing time: {result['processing_time']:.0f}ms")
-                            
-                            # Update display with classification
-                            cv2.putText(display_frame, f"CLASSIFIED: {result['classification'].upper()}", 
-                                       (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-                        else:
-                            print(f" [{timestamp}] Classification failed: {result.get('error', 'Unknown error')}")
-                            cv2.putText(display_frame, "CLASSIFICATION FAILED", 
-                                       (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    # Check if motion delay has passed
+                    time_since_motion = current_time - self.motion_first_detected
+                    
+                    if time_since_motion < self.motion_delay:
+                        # Still waiting for motion delay
+                        remaining_delay = self.motion_delay - time_since_motion
+                        cv2.putText(display_frame, f"MOTION - WAITING {remaining_delay:.1f}s", (10, 30), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
                     else:
-                        remaining_cooldown = self.cooldown_period - (time.time() - self.last_classification_time)
-                        cv2.putText(display_frame, f"COOLDOWN: {remaining_cooldown:.1f}s", 
-                                   (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 165, 0), 2)
+                        # Motion delay has passed
+                        cv2.putText(display_frame, "MOTION DETECTED", (10, 30), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        
+                        # Classify if not in cooldown
+                        if not self.is_in_cooldown():
+                            print(f"\n Object settled! Capturing frame #{frame_count}")
+                            
+                            # Classify the object
+                            result = self.classify_object(frame)
+                            self.last_classification_time = time.time()
+                            # Reset motion detection timer
+                            self.motion_first_detected = 0
+                            
+                            # Print results
+                            timestamp = datetime.now().strftime("%H:%M:%S")
+                            if result['classification'] != 'error':
+                                print(f" [{timestamp}] Classification: {result['classification'].upper()}")
+                                print(f"  Processing time: {result['processing_time']:.0f}ms")
+                                
+                                # Update display with classification
+                                cv2.putText(display_frame, f"CLASSIFIED: {result['classification'].upper()}", 
+                                           (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                            else:
+                                print(f" [{timestamp}] Classification failed: {result.get('error', 'Unknown error')}")
+                                cv2.putText(display_frame, "CLASSIFICATION FAILED", 
+                                           (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                        else:
+                            remaining_cooldown = self.cooldown_period - (time.time() - self.last_classification_time)
+                            cv2.putText(display_frame, f"COOLDOWN: {remaining_cooldown:.1f}s", 
+                                       (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 165, 0), 2)
+                else:
+                    # No motion detected, reset motion timer
+                    self.motion_first_detected = 0
                 
                 # Add status text
                 status_text = "READY" if not motion_detected else "MOTION"
