@@ -1,6 +1,18 @@
-# Human Detection Requirements
+# Human Detection API Requirements
+# Install with: pip install -r requirements.txt
+
+# Flask API dependencies
+Flask>=3.0.0
+Flask-CORS>=4.0.0
+
+# Computer Vision and ML
 ultralytics>=8.0.0
 opencv-python>=4.8.0
 numpy>=1.21.0
 torch>=2.0.0
 torchvision>=0.15.0
+
+# Additional utilities
+pillow>=8.3.2
+matplotlib>=3.7.1
+scipy>=1.11.3
