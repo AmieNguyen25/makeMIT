@@ -347,50 +347,6 @@ export default function TrashTracker({ onNavigate }) {
           textAlign: "center",
           position: "relative"
         }}>
-          <div style={{
-            position: "absolute",
-            top: "0",
-            right: "0",
-            display: "flex",
-            gap: "10px"
-          }}>
-            <button
-              onClick={() => onNavigate('thankyou')}
-              style={{
-                background: "#28a745",
-                color: "white",
-                border: "none",
-                borderRadius: "8px",
-                padding: "12px 24px",
-                fontSize: "16px",
-                fontWeight: "bold",
-                cursor: "pointer",
-                transition: "background 0.3s ease"
-              }}
-              onMouseOver={(e) => e.target.style.background = "#218838"}
-              onMouseOut={(e) => e.target.style.background = "#28a745"}
-            >
-              🎉 Thank You
-            </button>
-            <button
-              onClick={() => onNavigate('eyes')}
-              style={{
-                background: "#007bff",
-                color: "white",
-                border: "none",
-                borderRadius: "8px",
-                padding: "12px 24px",
-                fontSize: "16px",
-                fontWeight: "bold",
-                cursor: "pointer",
-                transition: "background 0.3s ease"
-              }}
-              onMouseOver={(e) => e.target.style.background = "#0056b3"}
-              onMouseOut={(e) => e.target.style.background = "#007bff"}
-            >
-              👁️ Back to Eyes
-            </button>
-          </div>
           <h1 style={{
             color: "#343a40",
             fontSize: "32px",
@@ -415,14 +371,6 @@ export default function TrashTracker({ onNavigate }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
             <div style={countStyle}>{counts.paper}</div>
-            <button
-              style={buttonStyle}
-              onClick={() => incrementCount('paper')}
-              onMouseOver={(e) => e.target.style.background = "#218838"}
-              onMouseOut={(e) => e.target.style.background = "#28a745"}
-            >
-              + Add
-            </button>
           </div>
         </div>
 
@@ -434,14 +382,6 @@ export default function TrashTracker({ onNavigate }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
             <div style={countStyle}>{counts.cans}</div>
-            <button
-              style={buttonStyle}
-              onClick={() => incrementCount('cans')}
-              onMouseOver={(e) => e.target.style.background = "#218838"}
-              onMouseOut={(e) => e.target.style.background = "#28a745"}
-            >
-              + Add
-            </button>
           </div>
         </div>
 
@@ -453,14 +393,6 @@ export default function TrashTracker({ onNavigate }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
             <div style={countStyle}>{counts.plasticBottles}</div>
-            <button
-              style={buttonStyle}
-              onClick={() => incrementCount('plasticBottles')}
-              onMouseOver={(e) => e.target.style.background = "#218838"}
-              onMouseOut={(e) => e.target.style.background = "#28a745"}
-            >
-              + Add
-            </button>
           </div>
         </div>
 
@@ -472,14 +404,6 @@ export default function TrashTracker({ onNavigate }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
             <div style={countStyle}>{counts.trash}</div>
-            <button
-              style={buttonStyle}
-              onClick={() => incrementCount('trash')}
-              onMouseOver={(e) => e.target.style.background = "#218838"}
-              onMouseOut={(e) => e.target.style.background = "#28a745"}
-            >
-              + Add
-            </button>
           </div>
         </div>
 

@@ -154,17 +154,24 @@ class SmartTrashBinAPI:
             
             # Classification prompt
             prompt = """Classify the primary object based on material composition, not brand or label.
-the primary object located on a plastic plate in the center of the image.
-Categories:
-- 
+IMPORTANT: If you only see an empty black plate with no object on it, respond with "no_object".
+If there IS an object ON the plate, classify only the PRIMARY OBJECT (not the plate) as:
+
+- no_object (if the black plate is empty with no object on it)
 - can (metal, aluminum beverage cans)
-- plastic (PET bottles, wrappers)
-- paper (cardboard, newspapers, paper materials)
+- plastic (bottles)
+- paper (paper, cardboard, newspapers, paper materials)
 - other (any object that does not fit the above categories)
+
+
+Rules:
+- Empty plate = "no_object"
+- Plate with object = classify the object only
+- Ignore the plate itself in classification
 
 Return exactly one lowercase word.
 If uncertain, infer based on visible material texture.
-Do not explain. Do not detect the plastic plate. Focus on the primary object."""
+Do not explain. Do not detect the plate. Focus on the primary object."""
             
             # Create model and generate content
             model = genai.GenerativeModel('gemini-2.5-flash')
@@ -185,7 +192,7 @@ Do not explain. Do not detect the plastic plate. Focus on the primary object."""
             classification_text = response.text.strip().lower()
             
             # Validate response
-            valid_categories = ['can', 'plastic', 'paper', 'other']
+            valid_categories = ['can', 'plastic', 'paper', 'other', 'no_object']
             
             if classification_text in valid_categories:
                 result_classification = classification_text
@@ -196,7 +203,7 @@ Do not explain. Do not detect the plastic plate. Focus on the primary object."""
                         result_classification = category
                         break
                 else:
-                    result_classification = 'unknown'
+                    result_classification = 'no_object'
             
             return {
                 'classification': result_classification,
@@ -325,18 +332,22 @@ Do not explain. Do not detect the plastic plate. Focus on the primary object."""
             # Print results
             timestamp = datetime.now().strftime("%H:%M:%S")
             if result['classification'] != 'error':
-                print(f"✅ [{timestamp}] Classification: {result['classification'].upper()}")
-                print(f"   Processing time: {result['processing_time']:.0f}ms")
-                
-                # Call robot movement API for detected classifications
                 classification = result['classification'].lower()
-                if classification in self.robot_movements:
-                    print(f"🔍 {classification.capitalize()} detected! Triggering robot movement...")
-                    robot_success = self.call_robot_movement_api(classification)
-                    if robot_success:
-                        print(f"🎯 Robot movement for {classification} completed successfully")
-                    else:
-                        print(f"⚠️ Robot movement for {classification} failed, but classification completed")
+                
+                if classification == 'no_object':
+                    print(f"📭 [{timestamp}] No object detected on plate - no action needed")
+                else:
+                    print(f"✅ [{timestamp}] Classification: {classification.upper()}")
+                    print(f"   Processing time: {result['processing_time']:.0f}ms")
+                    
+                    # Call robot movement API for detected classifications
+                    if classification in self.robot_movements:
+                        print(f"🔍 {classification.capitalize()} detected! Triggering robot movement...")
+                        robot_success = self.call_robot_movement_api(classification)
+                        if robot_success:
+                            print(f"🎯 Robot movement for {classification} completed successfully")
+                        else:
+                            print(f"⚠️ Robot movement for {classification} failed, but classification completed")
                         
             else:
                 print(f"❌ [{timestamp}] Classification failed: {result.get('error', 'Unknown error')}")
@@ -362,6 +373,24 @@ Do not explain. Do not detect the plastic plate. Focus on the primary object."""
             
             if response.status_code == 200:
                 print(f"✅ Robot movement API call for {classification} successful")
+                
+                # Wait 2 seconds before resetting to neutral position
+                print("⏱️ Waiting 2 seconds before reset...")
+                time.sleep(2)
+                
+                # Reset robot to neutral position after movement
+                reset_url = f"{self.robot_base_url}?spin=0&pivot=0"
+                print(f"🔄 Resetting robot to neutral position: {reset_url}")
+                
+                try:
+                    reset_response = requests.get(reset_url, timeout=self.robot_api_timeout)
+                    if reset_response.status_code == 200:
+                        print("✅ Robot reset to neutral position successful")
+                    else:
+                        print(f"⚠️ Robot reset failed with status code: {reset_response.status_code}")
+                except Exception as reset_error:
+                    print(f"⚠️ Robot reset failed: {str(reset_error)}")
+                
                 return True
             else:
                 print(f"⚠️ Robot API returned status code: {response.status_code}")
