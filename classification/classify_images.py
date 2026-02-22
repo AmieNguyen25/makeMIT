@@ -6,6 +6,15 @@ from dotenv import load_dotenv
 from datetime import datetime
 import time
 import base64
+from flask import Flask, Response, jsonify, render_template_string
+from flask_cors import CORS
+import threading
+import queue
+import json
+
+# Initialize Flask app
+app = Flask(__name__)
+CORS(app)  # Enable CORS for frontend integration
 
 # Load environment variables
 local_env_loaded = load_dotenv('.env')
@@ -23,17 +32,21 @@ else:
     print("❌ GEMINI_API_KEY not found in environment variables") 
     exit(1)
 
-class SmartTrashBin:
+class SmartTrashBinAPI:
     def __init__(self):
         self.cap = None
         self.background_subtractor = cv2.createBackgroundSubtractorMOG2(
             history=500, varThreshold=50, detectShadows=True
         )
         self.last_classification_time = 0
-        self.cooldown_period = 2.0  # 5 seconds
-        self.motion_threshold = 4000  # Minimum contour area for motion detection
-        self.motion_delay = 1.5  # Delay after motion detection before classification
-        self.motion_first_detected = 0  # When motion was first detected
+        self.cooldown_period = 5.0  # 5 seconds
+        self.motion_threshold = 5000  # Minimum contour area for motion detection
+        self.classification_in_progress = False
+        self.latest_classification_result = None
+        self.latest_frame = None
+        self.frame_queue = queue.Queue(maxsize=10)
+        self.running = False
+        self.camera_thread = None
         
     def initialize_camera(self):
         """Initialize webcam"""
@@ -119,10 +132,9 @@ class SmartTrashBin:
             prompt = """Classify the primary object based on material composition, not brand or label.
 
 Categories:
-- can (metal, aluminum beverage containers)
-- plastic (PET bottles, containers, wrappers)
+- can (metal, aluminum beverage cans)
+- plastic (PET bottles, wrappers)
 - paper (cardboard, newspapers, paper materials)
-- glass (glass bottles or jars)
 
 Return exactly one lowercase word.
 If uncertain, infer based on visible material texture.
@@ -178,118 +190,339 @@ Do not explain."""
         """Check if we're still in cooldown period"""
         return (time.time() - self.last_classification_time) < self.cooldown_period
     
-    def run_smart_classification(self):
-        """Main loop for smart trash bin classification"""
+    def start_camera_streaming(self):
+        """Start camera in a separate thread for streaming"""
         if not self.initialize_camera():
-            return
+            return False
             
-        print("\n SMART TRASH BIN CLASSIFICATION SYSTEM")
-        print("=" * 60)
-        print(" Live webcam preview active")
-        print(" Motion detection enabled")
-        print(f" {self.motion_delay}s delay after motion detection")
-        print(" 5-second cooldown between classifications")
-        print(" Press 'q' to quit")
-        print("=" * 60)
-        
+        self.running = True
+        self.camera_thread = threading.Thread(target=self._camera_loop, daemon=True)
+        self.camera_thread.start()
+        print("📹 Camera streaming started")
+        return True
+    
+    def stop_camera_streaming(self):
+        """Stop camera streaming"""
+        self.running = False
+        if self.camera_thread:
+            self.camera_thread.join()
+        if self.cap:
+            self.cap.release()
+        print("📹 Camera streaming stopped")
+    
+    def _camera_loop(self):
+        """Main camera loop running in separate thread"""
         frame_count = 0
         
-        try:
-            while True:
-                ret, frame = self.cap.read()
-                if not ret:
-                    print(" Error reading frame")
-                    break
+        while self.running and self.cap and self.cap.isOpened():
+            ret, frame = self.cap.read()
+            if not ret:
+                print("⚠️ Error reading frame")
+                time.sleep(0.1)
+                continue
                 
-                frame_count += 1
-                
-                # Detect motion
-                motion_detected, contours = self.detect_motion(frame)
-                
-                # Draw motion detection overlay
-                display_frame = frame.copy()
-                
-                if motion_detected:
-                    # Record when motion was first detected
-                    current_time = time.time()
-                    if self.motion_first_detected == 0:
-                        self.motion_first_detected = current_time
-                        print(f"\n Motion detected! Waiting {self.motion_delay}s for object to settle...")
-                    
-                    # Draw motion contours
-                    cv2.drawContours(display_frame, contours, -1, (0, 255, 0), 2)
-                    
-                    # Check if motion delay has passed
-                    time_since_motion = current_time - self.motion_first_detected
-                    
-                    if time_since_motion < self.motion_delay:
-                        # Still waiting for motion delay
-                        remaining_delay = self.motion_delay - time_since_motion
-                        cv2.putText(display_frame, f"MOTION - WAITING {remaining_delay:.1f}s", (10, 30), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
-                    else:
-                        # Motion delay has passed
-                        cv2.putText(display_frame, "MOTION DETECTED", (10, 30), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                        
-                        # Classify if not in cooldown
-                        if not self.is_in_cooldown():
-                            print(f"\n Object settled! Capturing frame #{frame_count}")
-                            
-                            # Classify the object
-                            result = self.classify_object(frame)
-                            self.last_classification_time = time.time()
-                            # Reset motion detection timer
-                            self.motion_first_detected = 0
-                            
-                            # Print results
-                            timestamp = datetime.now().strftime("%H:%M:%S")
-                            if result['classification'] != 'error':
-                                print(f" [{timestamp}] Classification: {result['classification'].upper()}")
-                                print(f"  Processing time: {result['processing_time']:.0f}ms")
-                                
-                                # Update display with classification
-                                cv2.putText(display_frame, f"CLASSIFIED: {result['classification'].upper()}", 
-                                           (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-                            else:
-                                print(f" [{timestamp}] Classification failed: {result.get('error', 'Unknown error')}")
-                                cv2.putText(display_frame, "CLASSIFICATION FAILED", 
-                                           (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                        else:
-                            remaining_cooldown = self.cooldown_period - (time.time() - self.last_classification_time)
-                            cv2.putText(display_frame, f"COOLDOWN: {remaining_cooldown:.1f}s", 
-                                       (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 165, 0), 2)
-                else:
-                    # No motion detected, reset motion timer
-                    self.motion_first_detected = 0
-                
-                # Add status text
-                status_text = "READY" if not motion_detected else "MOTION"
-                cv2.putText(display_frame, f"Status: {status_text}", (10, display_frame.shape[0] - 20), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-                
-                cv2.putText(display_frame, "Press 'q' to quit", (10, display_frame.shape[0] - 5), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
-                
-                # Show the frame
-                cv2.imshow('Smart Trash Bin - Material Classification', display_frame)
-                
-                # Check for quit
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    print("\nExiting smart trash bin system...")
-                    break
-                    
-        except KeyboardInterrupt:
-            print("\n  Interrupted by user")
+            frame_count += 1
+            
+            # Detect motion
+            motion_detected, contours = self.detect_motion(frame)
+            
+            # Create display frame with overlays
+            display_frame = self._create_display_frame(frame.copy(), motion_detected, contours, frame_count)
+            
+            # Store latest frame for streaming
+            self.latest_frame = display_frame
+            
+            # Handle motion detection and classification
+            if motion_detected and not self.is_in_cooldown() and not self.classification_in_progress:
+                print(f"🎯 Motion detected! Capturing frame #{frame_count}")
+                self._start_classification_thread(frame.copy())
+            
+            time.sleep(0.033)  # ~30 FPS
+    
+    def _create_display_frame(self, frame, motion_detected, contours, frame_count):
+        """Create frame with all visual overlays"""
+        display_frame = frame.copy()
         
+        if motion_detected:
+            # Draw motion contours
+            cv2.drawContours(display_frame, contours, -1, (0, 255, 0), 2)
+            cv2.putText(display_frame, "MOTION DETECTED", (10, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            
+            if self.classification_in_progress:
+                cv2.putText(display_frame, "CLASSIFYING...", (10, 70), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            elif self.is_in_cooldown():
+                remaining_cooldown = self.cooldown_period - (time.time() - self.last_classification_time)
+                cv2.putText(display_frame, f"COOLDOWN: {remaining_cooldown:.1f}s", (10, 70), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 165, 0), 2)
+        
+        # Display latest classification result
+        if self.latest_classification_result:
+            result = self.latest_classification_result
+            if result['classification'] != 'error':
+                cv2.putText(display_frame, f"CLASSIFIED: {result['classification'].upper()}", 
+                           (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1)
+                cv2.putText(display_frame, f"Time: {result['processing_time']:.0f}ms", 
+                           (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+            else:
+                cv2.putText(display_frame, "CLASSIFICATION FAILED", 
+                           (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 1)
+        
+        # Add status text
+        status_text = "READY" if not motion_detected else "MOTION"
+        api_status = " | API: BUSY" if self.classification_in_progress else " | API: READY"
+        cv2.putText(display_frame, f"Status: {status_text}{api_status}", (10, display_frame.shape[0] - 20), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        return display_frame
+    
+    def _start_classification_thread(self, frame):
+        """Start classification in a separate thread"""
+        if not self.classification_in_progress:
+            self.classification_in_progress = True
+            self.last_classification_time = time.time()
+            
+            classification_thread = threading.Thread(
+                target=self._classify_in_thread, 
+                args=(frame,), 
+                daemon=True
+            )
+            classification_thread.start()
+    
+    def _classify_in_thread(self, frame):
+        """Run classification in separate thread"""
+        try:
+            result = self.classify_object(frame)
+            self.latest_classification_result = result
+            
+            # Print results
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            if result['classification'] != 'error':
+                print(f"✅ [{timestamp}] Classification: {result['classification'].upper()}")
+                print(f"   Processing time: {result['processing_time']:.0f}ms")
+            else:
+                print(f"❌ [{timestamp}] Classification failed: {result.get('error', 'Unknown error')}")
+                
         finally:
-            # Clean up
-            if self.cap:
-                self.cap.release()
-            cv2.destroyAllWindows()
-            print(" Camera and windows closed")
+            self.classification_in_progress = False
+
+# Global instance of the trash bin system
+trash_bin = SmartTrashBinAPI()
+
+@app.route('/')
+def index():
+    """Simple HTML page for testing the video stream"""
+    return render_template_string('''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Smart Trash Bin API</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; background-color: #f0f0f0; }
+            .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+            .video-container { margin: 20px 0; }
+            .status-panel { background: #fff; border-radius: 8px; padding: 15px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            .btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px; }
+            .btn:hover { background: #0056b3; }
+            .classification-result { font-size: 24px; font-weight: bold; margin: 10px 0; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🗑️ Smart Trash Bin Classification System</h1>
+            
+            <div class="video-container">
+                <img src="/video_feed" style="width: 100%; max-width: 640px; border: 2px solid #ddd; border-radius: 8px;">
+            </div>
+            
+            <div class="status-panel">
+                <h3>System Controls</h3>
+                <button class="btn" onclick="startSystem()">Start System</button>
+                <button class="btn" onclick="stopSystem()">Stop System</button>
+                <button class="btn" onclick="getStatus()">Get Status</button>
+            </div>
+            
+            <div class="status-panel" id="statusPanel">
+                <h3>Current Status</h3>
+                <div id="systemStatus">System Ready</div>
+                <div class="classification-result" id="lastClassification">No classification yet</div>
+            </div>
+        </div>
+        
+        <script>
+            function startSystem() {
+                fetch('/start')
+                    .then(response => response.json())
+                    .then(data => alert(data.message));
+            }
+            
+            function stopSystem() {
+                fetch('/stop')
+                    .then(response => response.json())
+                    .then(data => alert(data.message));
+            }
+            
+            function getStatus() {
+                fetch('/status')
+                    .then(response => response.json())
+                    .then(data => {
+                        document.getElementById('systemStatus').innerHTML = 
+                            `Running: ${data.running}<br>` +
+                            `Classifying: ${data.classification_in_progress}<br>` +
+                            `Cooldown: ${data.in_cooldown}`;
+                        
+                        if (data.latest_classification) {
+                            const result = data.latest_classification;
+                            document.getElementById('lastClassification').innerHTML = 
+                                `Latest: ${result.classification.toUpperCase()} (${result.processing_time}ms)`;
+                        }
+                    });
+            }
+            
+            // Auto-refresh status every 2 seconds
+            setInterval(getStatus, 2000);
+        </script>
+    </body>
+    </html>
+    ''')
+
+@app.route('/video_feed')
+def video_feed():
+    """Video streaming endpoint"""
+    def generate_frames():
+        while trash_bin.running:
+            if trash_bin.latest_frame is not None:
+                # Encode frame as JPEG
+                ret, buffer = cv2.imencode('.jpg', trash_bin.latest_frame, 
+                                         [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if ret:
+                    frame_bytes = buffer.tobytes()
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            time.sleep(0.033)  # ~30 FPS
+    
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/start', methods=['GET', 'POST'])
+def start_system():
+    """Start the camera system"""
+    try:
+        if trash_bin.running:
+            return jsonify({
+                'status': 'warning',
+                'message': 'System already running',
+                'running': True
+            })
+        
+        success = trash_bin.start_camera_streaming()
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': 'Smart Trash Bin system started successfully',
+                'running': True
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to start camera system',
+                'running': False
+            })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error starting system: {str(e)}',
+            'running': False
+        })
+
+@app.route('/stop', methods=['GET', 'POST'])
+def stop_system():
+    """Stop the camera system"""
+    try:
+        trash_bin.stop_camera_streaming()
+        return jsonify({
+            'status': 'success',
+            'message': 'Smart Trash Bin system stopped',
+            'running': False
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error stopping system: {str(e)}',
+            'running': trash_bin.running
+        })
+
+@app.route('/status')
+def get_status():
+    """Get current system status"""
+    return jsonify({
+        'running': trash_bin.running,
+        'classification_in_progress': trash_bin.classification_in_progress,
+        'in_cooldown': trash_bin.is_in_cooldown(),
+        'latest_classification': trash_bin.latest_classification_result,
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    })
+
+@app.route('/classify', methods=['POST'])
+def trigger_classification():
+    """Manually trigger classification (for testing)"""
+    try:
+        if not trash_bin.running:
+            return jsonify({
+                'status': 'error',
+                'message': 'System not running'
+            })
+        
+        if trash_bin.classification_in_progress:
+            return jsonify({
+                'status': 'warning',
+                'message': 'Classification already in progress'
+            })
+        
+        if trash_bin.is_in_cooldown():
+            remaining = trash_bin.cooldown_period - (time.time() - trash_bin.last_classification_time)
+            return jsonify({
+                'status': 'warning',
+                'message': f'In cooldown period. {remaining:.1f}s remaining'
+            })
+        
+        if trash_bin.latest_frame is not None:
+            trash_bin._start_classification_thread(trash_bin.latest_frame.copy())
+            return jsonify({
+                'status': 'success',
+                'message': 'Classification triggered'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'No frame available for classification'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error triggering classification: {str(e)}'
+        })
 
 if __name__ == "__main__":
-    # Create and run smart trash bin
-    smart_bin = SmartTrashBin()
-    smart_bin.run_smart_classification()
+    print("🚀 Starting Smart Trash Bin Flask API...")
+    print("=" * 60)
+    print("🌐 API Endpoints:")
+    print("   GET  /              - Web interface")
+    print("   GET  /video_feed    - Live video stream")
+    print("   POST /start         - Start camera system")
+    print("   POST /stop          - Stop camera system")
+    print("   GET  /status        - Get system status")
+    print("   POST /classify      - Manual classification trigger")
+    print("=" * 60)
+    print("📱 Frontend Integration:")
+    print("   Video stream URL: http://localhost:5000/video_feed")
+    print("   Status API URL: http://localhost:5000/status")
+    print("=" * 60)
+    
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+    except KeyboardInterrupt:
+        print("\n🛑 Shutting down...")
+        trash_bin.stop_camera_streaming()
+        print("👋 Goodbye!")
