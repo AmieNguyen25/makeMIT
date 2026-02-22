@@ -6,6 +6,9 @@ from dotenv import load_dotenv
 from datetime import datetime
 import time
 import base64
+from flask import Flask, Response, jsonify
+from flask_cors import CORS
+import threading
 
 # Load environment variables
 local_env_loaded = load_dotenv('.env')
@@ -23,6 +26,108 @@ else:
     print("❌ GEMINI_API_KEY not found in environment variables") 
     exit(1)
 
+# Flask app for serving camera feed and counters
+app = Flask(__name__)
+CORS(app)
+current_frame = None
+frame_lock = threading.Lock()
+has_camera = False
+
+# Global counters for classifications
+classification_counters = {
+    'can': 0,
+    'plastic': 0, 
+    'paper': 0,
+    'glass': 0,
+    'total': 0
+}
+counters_lock = threading.Lock()
+
+def increment_counter(category):
+    """Increment counter for classified category"""
+    global classification_counters
+    with counters_lock:
+        if category in classification_counters:
+            classification_counters[category] += 1
+            classification_counters['total'] += 1
+            print(f"📊 Updated counters: {category.upper()} = {classification_counters[category]} (Total: {classification_counters['total']})")
+
+def generate_test_pattern():
+    """Generate a test pattern when no camera is available"""
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    
+    # Add gradient background
+    for y in range(480):
+        for x in range(640):
+            frame[y, x] = [x // 3, y // 2, 128]
+    
+    # Add text
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(frame, "CAMERA NOT DETECTED", (160, 200), font, 1.2, (255, 255, 255), 2)
+    cv2.putText(frame, "Web Interface Active", (200, 240), font, 0.8, (255, 255, 0), 2)
+    cv2.putText(frame, f"Time: {time.strftime('%H:%M:%S')}", (20, 450), font, 0.7, (255, 255, 255), 2)
+    cv2.putText(frame, "Check camera permissions and connections", (100, 280), font, 0.6, (200, 200, 200), 1)
+    
+    return frame
+
+def generate_video_stream():
+    """Generate video stream for web display"""
+    global current_frame, has_camera
+    while True:
+        with frame_lock:
+            if current_frame is not None:
+                ret, buffer = cv2.imencode('.jpg', current_frame)
+            elif not has_camera:
+                # Generate test pattern if no camera
+                test_frame = generate_test_pattern()
+                ret, buffer = cv2.imencode('.jpg', test_frame)
+            else:
+                time.sleep(0.1)
+                continue
+                
+            if ret:
+                frame_bytes = buffer.tobytes()
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        time.sleep(0.033)  # ~30 FPS
+
+@app.route('/video_feed')
+def video_feed():
+    """Video streaming route"""
+    return Response(generate_video_stream(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/status')
+def camera_status():
+    """Camera status endpoint"""
+    global has_camera
+    if has_camera and current_frame is not None:
+        return {'status': 'active'}
+    elif not has_camera:
+        return {'status': 'no_camera'}
+    else:
+        return {'status': 'inactive'}
+
+@app.route('/counters')
+def get_counters():
+    """Get classification counters"""
+    with counters_lock:
+        return classification_counters.copy()
+
+@app.route('/reset_counters', methods=['POST'])
+def reset_counters():
+    """Reset all counters"""
+    global classification_counters
+    with counters_lock:
+        classification_counters = {
+            'can': 0,
+            'plastic': 0,
+            'paper': 0, 
+            'glass': 0,
+            'total': 0
+        }
+    return {'status': 'success', 'message': 'Counters reset'}
+
 class SmartTrashBin:
     def __init__(self):
         self.cap = None
@@ -31,42 +136,62 @@ class SmartTrashBin:
         )
         self.last_classification_time = 0
         self.cooldown_period = 1.2  # 5 seconds
-        self.motion_threshold = 5000  # Minimum contour area for motion detection
+        self.motion_threshold = 2000  # Minimum contour area for motion detection
+        
+        # Initialize counters
+        self.counters = {
+            'can': 0,
+            'plastic': 0,
+            'paper': 0,
+            'glass': 0,
+            'total': 0
+        }
         
     def initialize_camera(self):
         """Initialize webcam"""
-        print(" Initializing camera...")
+        global has_camera
+        print("📷 Initializing camera...")
         
         # Try different camera indices
         for camera_index in range(5):  # Try cameras 0-4
-            print(f"Trying camera index {camera_index}...")
+            print(f"🔍 Trying camera index {camera_index}...")
             self.cap = cv2.VideoCapture(camera_index)
             
             if self.cap.isOpened():
-                # Test if camera can actually read frames
+                # Test if camera can actually read frames with timeout
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer to avoid lag
                 ret, _ = self.cap.read()
                 if ret:
-                    print(f"Camera {camera_index} opened successfully!")
+                    print(f"✅ Camera {camera_index} opened successfully!")
                     break
                 else:
+                    print(f"❌ Camera index {camera_index} opened but cannot read frames")
                     self.cap.release()
+            else:
+                print(f"❌ Camera index {camera_index} failed to open")
             
             if camera_index == 4:  # Last attempt
-                print(" Error: Could not open any camera (tried indices 0-4)")
+                print("⚠️ No camera detected - enabling web-only mode")
+                self.cap = None
+                has_camera = False
                 return False
             
-        # Set camera resolution
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        
-        # Warm up the camera
-        for _ in range(10):
+        # Set camera resolution if we have a working camera
+        if self.cap and self.cap.isOpened():
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            
+            # Quick warm up test
             ret, _ = self.cap.read()
             if not ret:
-                print(" Error: Could not read from camera")
+                print("❌ Error: Could not read from camera during warmup")
+                self.cap.release()
+                self.cap = None
+                has_camera = False
                 return False
                 
-        print(" Camera initialized successfully")
+        print("✅ Camera initialized successfully")
+        has_camera = True
         return True
     
     def detect_motion(self, frame):
@@ -178,14 +303,33 @@ Do not explain."""
     
     def run_smart_classification(self):
         """Main loop for smart trash bin classification"""
-        if not self.initialize_camera():
-            return
+        global has_camera
+        camera_available = self.initialize_camera()
+        
+        if not camera_available:
+            print("\n🌐 WEB-ONLY MODE ACTIVE")
+            print("=" * 60)
+            print("📹 Camera not available - serving test pattern")
+            print("🔗 Web interface: http://localhost:5002/video_feed")
+            print("📊 Counters API: http://localhost:5002/counters")
+            print("⏹️  Press Ctrl+C to quit")
+            print("=" * 60)
             
-        print("\n SMART TRASH BIN CLASSIFICATION SYSTEM")
+            # Keep running to serve web interface
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\n🛑 Web server stopped")
+                return
+        
+        print("\n🗑️  SMART TRASH BIN CLASSIFICATION SYSTEM")
         print("=" * 60)
-        print(" Live webcam preview active")
-        print(" Motion detection enabled")
-        print(" 5-second cooldown between classifications")
+        print("📹 Live webcam preview active")
+        print("🔍 Motion detection enabled") 
+        print("⏱️  5-second cooldown between classifications")
+        print("🌐 Web interface: http://localhost:5002/video_feed")
+        print("📊 Counters API: http://localhost:5002/counters")
         print(" Press 'q' to quit")
         print("=" * 60)
         
@@ -223,12 +367,21 @@ Do not explain."""
                         # Print results
                         timestamp = datetime.now().strftime("%H:%M:%S")
                         if result['classification'] != 'error':
-                            print(f" [{timestamp}] Classification: {result['classification'].upper()}")
-                            print(f"  Processing time: {result['processing_time']:.0f}ms")
+                            # Increment counter for successful classification
+                            category = result['classification']
+                            increment_counter(category)
+                            
+                            print(f"📋 [{timestamp}] Classification: {result['classification'].upper()}")
+                            print(f"⏱️  Processing time: {result['processing_time']:.0f}ms")
                             
                             # Update display with classification
                             cv2.putText(display_frame, f"CLASSIFIED: {result['classification'].upper()}", 
                                        (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                            
+                            # Show counter on display
+                            counter_text = f"{category.upper()}: {classification_counters[category]} | TOTAL: {classification_counters['total']}"
+                            cv2.putText(display_frame, counter_text, 
+                                       (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
                         else:
                             print(f" [{timestamp}] Classification failed: {result.get('error', 'Unknown error')}")
                             cv2.putText(display_frame, "CLASSIFICATION FAILED", 
@@ -245,6 +398,11 @@ Do not explain."""
                 
                 cv2.putText(display_frame, "Press 'q' to quit", (10, display_frame.shape[0] - 5), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+                
+                # Update global frame for HTTP streaming
+                global current_frame
+                with frame_lock:
+                    current_frame = display_frame.copy()
                 
                 # Show the frame
                 cv2.imshow('Smart Trash Bin - Material Classification', display_frame)
@@ -265,6 +423,12 @@ Do not explain."""
             print(" Camera and windows closed")
 
 if __name__ == "__main__":
+    # Start Flask server in background thread
+    flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5002, debug=False), daemon=True)
+    flask_thread.start()
+    print("🌐 Camera web server started at http://localhost:5002/video_feed")
+    print("📊 Counters API at http://localhost:5002/counters")
+    
     # Create and run smart trash bin
     smart_bin = SmartTrashBin()
     smart_bin.run_smart_classification()
