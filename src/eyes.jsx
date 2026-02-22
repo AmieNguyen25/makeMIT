@@ -6,7 +6,7 @@ export default function Eyes({ onNavigate }) {
   useEffect(() => {
     const handleMouse = (e) => {
       const percent = e.clientX / window.innerWidth
-      const newOffset = (percent - 0.5) * 40 // Reduced range for robot eyes
+      const newOffset = (percent - 0.5) * 70 // Increased range for more eye movement
       setOffset(newOffset)
     }
 
@@ -29,10 +29,10 @@ export default function Eyes({ onNavigate }) {
   }
 
   const pixelEyeStyle = {
-    width: "200px",
-    height: "120px",
+    width: "140px",
+    height: "80px",
     background: "#00ff41",
-    borderRadius: "60px",
+    borderRadius: "40px",
     transform: `translateX(${offset}px)`,
     transition: "transform 0.15s ease-out",
     boxShadow: "inset 0 4px 8px rgba(0,255,65,0.3), 0 0 20px rgba(0,255,65,0.2)",

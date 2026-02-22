@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
+
+const CLASSIFICATION_API_URL = 'http://localhost:5000';
 
 export default function TrashTracker({ onNavigate }) {
   const [counts, setCounts] = useState({
@@ -7,6 +9,162 @@ export default function TrashTracker({ onNavigate }) {
     plasticBottles: 0,
     trash: 0
   })
+
+  const [cameraSystem, setCameraSystem] = useState({
+    running: false,
+    classifying: false,
+    inCooldown: false,
+    latestClassification: null,
+    systemStatus: 'disconnected'
+  })
+
+  // Use ref to persist classification tracking across re-renders
+  const lastProcessedRef = useRef(null)
+
+  // Generate unique key for classification result
+  const getClassificationKey = (classificationData) => {
+    if (!classificationData) return null;
+
+    // Debug: Log the classification data structure
+    console.log('Classification data:', classificationData);
+
+    // Use combination of classification + processing_time as unique identifier
+    // Note: timestamp might not be available in the response
+    const key = `${classificationData.classification}_${classificationData.processing_time}`;
+    console.log('Generated key:', key);
+    return key;
+  };
+
+  // Fetch camera system status
+  const fetchCameraStatus = async () => {
+    try {
+      const response = await fetch(`${CLASSIFICATION_API_URL}/status`);
+      if (response.ok) {
+        const data = await response.json();
+        setCameraSystem({
+          running: data.running,
+          classifying: data.classification_in_progress,
+          inCooldown: data.in_cooldown,
+          latestClassification: data.latest_classification,
+          systemStatus: 'connected'
+        });
+
+        // Process new classifications and update counts
+        if (data.latest_classification &&
+          data.latest_classification.classification &&
+          data.latest_classification.classification !== 'error' &&
+          data.latest_classification.classification !== 'no_object') {
+
+          const classificationKey = getClassificationKey(data.latest_classification);
+
+          if (classificationKey && classificationKey !== lastProcessedRef.current) {
+            console.log('🎯 New classification detected:', data.latest_classification.classification);
+            lastProcessedRef.current = classificationKey;
+
+            // Update counts based on classification
+            const classification = data.latest_classification.classification.toLowerCase();
+            if (classification === 'paper') {
+              incrementCount('paper');
+            } else if (classification === 'can') {
+              incrementCount('cans');
+            } else if (classification === 'plastic') {
+              incrementCount('plasticBottles');
+            } else {
+              incrementCount('trash'); // 'other' and unknown types
+            }
+
+            // After counter is updated, wait 2 seconds before checking navigation trigger
+            console.log('📊 Counter updated, waiting 2 seconds before navigation...');
+            setTimeout(() => {
+              checkNavigationTriggerAfterCount();
+            }, 2000); // 2 second delay before navigation to thank you page
+          }
+        }
+      } else {
+        setCameraSystem(prev => ({ ...prev, systemStatus: 'error' }));
+      }
+    } catch (error) {
+      console.error('Error fetching camera status:', error);
+      setCameraSystem(prev => ({ ...prev, systemStatus: 'disconnected' }));
+    }
+  };
+
+  // Check for navigation triggers after counter update
+  const checkNavigationTriggerAfterCount = async () => {
+    try {
+      const response = await fetch(`${CLASSIFICATION_API_URL}/navigation_trigger`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.trigger && data.action === 'show_thankyou') {
+          console.log(`🎉 Navigation trigger after count: ${data.action} for ${data.classified_item}`);
+
+          // Navigate to ThankYou page
+          onNavigate('thankyou');
+
+          // Set timer to return to tracker after 4 seconds
+          setTimeout(() => {
+            console.log('⏰ Returning to TrashTracker after 4 seconds');
+            onNavigate('tracker');
+          }, 4000);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking navigation trigger after count:', error);
+    }
+  };
+
+  // Check for navigation triggers (regular polling - fallback)
+  const checkNavigationTrigger = async () => {
+    // This is now a fallback check, main navigation happens after counter update
+    try {
+      const response = await fetch(`${CLASSIFICATION_API_URL}/navigation_trigger`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.trigger && data.action === 'show_thankyou') {
+          console.log(`🎉 Fallback navigation trigger: ${data.action} for ${data.classified_item}`);
+        }
+      }
+    } catch (error) {
+      console.error('Error in fallback navigation trigger check:', error);
+    }
+  };
+
+  // Start camera system
+  const startCameraSystem = async () => {
+    try {
+      const response = await fetch(`${CLASSIFICATION_API_URL}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (response.ok) {
+        fetchCameraStatus();
+      }
+    } catch (error) {
+      console.error('Failed to start camera system:', error);
+    }
+  };
+
+  // Stop camera system
+  const stopCameraSystem = async () => {
+    try {
+      const response = await fetch(`${CLASSIFICATION_API_URL}/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (response.ok) {
+        fetchCameraStatus();
+      }
+    } catch (error) {
+      console.error('Failed to stop camera system:', error);
+    }
+  };
+
+  // Poll camera status every 2 seconds (navigation happens after counter updates)
+  useEffect(() => {
+    fetchCameraStatus(); // Initial fetch
+    const interval = setInterval(fetchCameraStatus, 2000); // Only poll status, navigation triggered after count
+    return () => clearInterval(interval);
+  }, []);
 
   const incrementCount = (type) => {
     setCounts(prev => ({
@@ -97,42 +255,134 @@ export default function TrashTracker({ onNavigate }) {
     }}>
       {/* Camera View Section */}
       <div style={cameraViewStyle}>
-        <div style={{
-          width: "80%",
-          height: "60%",
-          background: "#2d2d2d",
-          borderRadius: "12px",
-          border: "3px dashed #666",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          alignItems: "center",
-          position: "relative"
-        }}>
+        {cameraSystem.systemStatus === 'connected' && cameraSystem.running ? (
           <div style={{
-            fontSize: "64px",
-            color: "#666",
-            marginBottom: "20px"
-          }}>📹</div>
-          <div style={{
-            color: "#aaa",
-            fontSize: "18px",
-            textAlign: "center"
+            width: "90%",
+            height: "70%",
+            borderRadius: "12px",
+            overflow: "hidden",
+            border: "3px solid #28a745",
+            position: "relative"
           }}>
-            <div>Camera View</div>
-            <div style={{ fontSize: "14px", marginTop: "8px" }}>
-              Live feed will appear here
+            <img
+              src={`${CLASSIFICATION_API_URL}/video_feed`}
+              alt="Live Camera Feed"
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover"
+              }}
+              onError={(e) => {
+                e.target.style.display = 'none';
+              }}
+            />
+
+            {/* Status Overlays */}
+            <div style={{
+              position: "absolute",
+              top: "10px",
+              left: "10px",
+              background: "rgba(0,0,0,0.7)",
+              color: "white",
+              padding: "8px 12px",
+              borderRadius: "6px",
+              fontSize: "14px"
+            }}>
+              {cameraSystem.classifying ? "🔄 Classifying..." :
+                cameraSystem.inCooldown ? "⏳ Cooldown" :
+                  "✅ Ready"}
+            </div>
+
+            {cameraSystem.latestClassification && (
+              <div style={{
+                position: "absolute",
+                bottom: "10px",
+                left: "10px",
+                background: "rgba(40, 167, 69, 0.9)",
+                color: "white",
+                padding: "8px 12px",
+                borderRadius: "6px",
+                fontSize: "16px",
+                fontWeight: "bold"
+              }}>
+                Last: {cameraSystem.latestClassification.classification?.toUpperCase() || 'Unknown'}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{
+            width: "80%",
+            height: "60%",
+            background: "#2d2d2d",
+            borderRadius: "12px",
+            border: "3px dashed #666",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            position: "relative"
+          }}>
+            <div style={{
+              fontSize: "64px",
+              color: "#666",
+              marginBottom: "20px"
+            }}>📹</div>
+            <div style={{
+              color: "#aaa",
+              fontSize: "18px",
+              textAlign: "center"
+            }}>
+              <div>Camera System</div>
+              <div style={{ fontSize: "14px", marginTop: "8px" }}>
+                {cameraSystem.systemStatus === 'disconnected' ? 'Service Offline' :
+                  cameraSystem.systemStatus === 'error' ? 'Connection Error' :
+                    'System Stopped'}
+              </div>
             </div>
           </div>
+        )}
+
+        {/* Camera Controls */}
+        <div style={{
+          display: "flex",
+          gap: "15px",
+          marginTop: "20px"
+        }}>
+          <button
+            onClick={startCameraSystem}
+            disabled={cameraSystem.running || cameraSystem.systemStatus !== 'connected'}
+            style={{
+              ...buttonStyle,
+              background: cameraSystem.running ? "#6c757d" : "#28a745",
+              cursor: cameraSystem.running || cameraSystem.systemStatus !== 'connected' ? "not-allowed" : "pointer"
+            }}
+          >
+            {cameraSystem.running ? "Running" : "Start Camera"}
+          </button>
+
+          <button
+            onClick={stopCameraSystem}
+            disabled={!cameraSystem.running || cameraSystem.systemStatus !== 'connected'}
+            style={{
+              ...buttonStyle,
+              background: !cameraSystem.running ? "#6c757d" : "#dc3545",
+              cursor: !cameraSystem.running || cameraSystem.systemStatus !== 'connected' ? "not-allowed" : "pointer"
+            }}
+          >
+            Stop Camera
+          </button>
         </div>
-        
+
         <div style={{
           position: "absolute",
           bottom: "30px",
-          color: "#666",
-          fontSize: "14px"
+          color: cameraSystem.systemStatus === 'connected' ? "#28a745" : "#dc3545",
+          fontSize: "14px",
+          fontWeight: "bold"
         }}>
-          Real-time Detection Active
+          Status: {cameraSystem.systemStatus === 'connected' ?
+            (cameraSystem.running ? "Active Detection" : "System Ready") :
+            cameraSystem.systemStatus === 'disconnected' ? "Service Offline" : "Connection Error"}
         </div>
       </div>
 
@@ -143,50 +393,6 @@ export default function TrashTracker({ onNavigate }) {
           textAlign: "center",
           position: "relative"
         }}>
-          <div style={{ 
-            position: "absolute",
-            top: "0",
-            right: "0",
-            display: "flex",
-            gap: "10px"
-          }}>
-            <button
-              onClick={() => onNavigate('thankyou')}
-              style={{
-                background: "#28a745",
-                color: "white",
-                border: "none",
-                borderRadius: "8px",
-                padding: "12px 24px",
-                fontSize: "16px",
-                fontWeight: "bold",
-                cursor: "pointer",
-                transition: "background 0.3s ease"
-              }}
-              onMouseOver={(e) => e.target.style.background = "#218838"}
-              onMouseOut={(e) => e.target.style.background = "#28a745"}
-            >
-              🎉 Thank You
-            </button>
-            <button
-              onClick={() => onNavigate('eyes')}
-              style={{
-                background: "#007bff",
-                color: "white",
-                border: "none",
-                borderRadius: "8px",
-                padding: "12px 24px",
-                fontSize: "16px",
-                fontWeight: "bold",
-                cursor: "pointer",
-                transition: "background 0.3s ease"
-              }}
-              onMouseOver={(e) => e.target.style.background = "#0056b3"}
-              onMouseOut={(e) => e.target.style.background = "#007bff"}
-            >
-              👁️ Back to Eyes
-            </button>
-          </div>
           <h1 style={{
             color: "#343a40",
             fontSize: "32px",
@@ -211,14 +417,6 @@ export default function TrashTracker({ onNavigate }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
             <div style={countStyle}>{counts.paper}</div>
-            <button 
-              style={buttonStyle}
-              onClick={() => incrementCount('paper')}
-              onMouseOver={(e) => e.target.style.background = "#218838"}
-              onMouseOut={(e) => e.target.style.background = "#28a745"}
-            >
-              + Add
-            </button>
           </div>
         </div>
 
@@ -230,14 +428,6 @@ export default function TrashTracker({ onNavigate }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
             <div style={countStyle}>{counts.cans}</div>
-            <button 
-              style={buttonStyle}
-              onClick={() => incrementCount('cans')}
-              onMouseOver={(e) => e.target.style.background = "#218838"}
-              onMouseOut={(e) => e.target.style.background = "#28a745"}
-            >
-              + Add
-            </button>
           </div>
         </div>
 
@@ -249,14 +439,6 @@ export default function TrashTracker({ onNavigate }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
             <div style={countStyle}>{counts.plasticBottles}</div>
-            <button 
-              style={buttonStyle}
-              onClick={() => incrementCount('plasticBottles')}
-              onMouseOver={(e) => e.target.style.background = "#218838"}
-              onMouseOut={(e) => e.target.style.background = "#28a745"}
-            >
-              + Add
-            </button>
           </div>
         </div>
 
@@ -268,14 +450,6 @@ export default function TrashTracker({ onNavigate }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
             <div style={countStyle}>{counts.trash}</div>
-            <button 
-              style={buttonStyle}
-              onClick={() => incrementCount('trash')}
-              onMouseOver={(e) => e.target.style.background = "#218838"}
-              onMouseOut={(e) => e.target.style.background = "#28a745"}
-            >
-              + Add
-            </button>
           </div>
         </div>
 
@@ -292,7 +466,7 @@ export default function TrashTracker({ onNavigate }) {
             Total Items Processed: {counts.paper + counts.cans + counts.plasticBottles + counts.trash}
           </div>
           <div style={{ marginTop: "16px" }}>
-            <button 
+            <button
               style={{
                 ...buttonStyle,
                 background: "#dc3545"

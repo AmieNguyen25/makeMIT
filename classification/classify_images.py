@@ -11,6 +11,7 @@ from flask_cors import CORS
 import threading
 import queue
 import json
+import requests
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -42,11 +43,25 @@ class SmartTrashBinAPI:
         self.cooldown_period = 5.0  # 5 seconds
         self.motion_threshold = 5000  # Minimum contour area for motion detection
         self.classification_in_progress = False
+        self.motion_detection_enabled = True  # Flag to disable motion during robot operations
+        self.navigation_trigger = None  # Track when to trigger navigation to ThankYou page
         self.latest_classification_result = None
         self.latest_frame = None
         self.frame_queue = queue.Queue(maxsize=10)
         self.running = False
         self.camera_thread = None
+        
+        # Robot movement API configuration
+        self.robot_base_url = "http://10.250.167.161/move"
+        self.robot_api_timeout = 5.0  # seconds
+        
+        # Robot movement parameters for each classification
+        self.robot_movements = {
+            'plastic': {'spin': 65, 'pivot': -40},
+            'can': {'spin': 65, 'pivot': 40},
+            'paper': {'spin': -65, 'pivot': -40},
+            'other': {'spin': -65, 'pivot': 40}
+        }
         
     def initialize_camera(self):
         """Initialize webcam"""
@@ -79,6 +94,11 @@ class SmartTrashBinAPI:
             
         # Set camera resolution if we have a working camera
         if self.cap and self.cap.isOpened():
+            # Reduce exposure for better image quality
+            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)  # Disable auto-exposure
+            self.cap.set(cv2.CAP_PROP_EXPOSURE, -6)  # Reduce exposure (typical range: -13 to -1)
+            print("📸 Camera exposure reduced for better image quality")
+            
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             
@@ -140,16 +160,43 @@ class SmartTrashBinAPI:
             image_base64 = self.frame_to_base64(resized_frame)
             
             # Classification prompt
-            prompt = """Classify the primary object based on material composition, not brand or label.
+            prompt = """You are a strict visual classification system.
 
-Categories:
-- can (metal, aluminum beverage cans)
-- plastic (PET bottles, wrappers)
-- paper (cardboard, newspapers, paper materials)
+Analyze the image and determine whether there is a physical object resting on the brown plate.
 
-Return exactly one lowercase word.
-If uncertain, infer based on visible material texture.
-Do not explain."""
+The brown plate is the background and must NEVER be classified.
+
+Always etermine if the plate is completely empty.
+
+If the plate is completely empty and no physical object is resting on it, return exactly: no_object
+
+
+
+Ignore:
+The brown plate
+The brown plate is not the object and should not be classified
+The brown plate is the background
+Shadows
+Reflections
+Printed images
+Logos or labels
+Designs on the plate
+if there is nothing on the plate, the place is empty and should be classified as no_object.
+Classify only real, physical objects based on material and structure.
+
+Allowed categories (return exactly one lowercase word):
+-no_object : plate is completely empty
+-can: aluminum or metal beverage can (even crushed)
+-plastic: plastic bottle or rigid plastic container, a crushed water bottle, or any object made primarily of plastic
+-paper: paper, newspaper, napkin
+- other: any object not listed above (food, fabric, electronics, etc.)
+
+Strict output rules:
+-Return exactly ONE lowercase word
+-No punctuation
+-No explanation
+-No extra text
+-No quotes"""
             
             # Create model and generate content
             model = genai.GenerativeModel('gemini-2.5-flash')
@@ -170,7 +217,7 @@ Do not explain."""
             classification_text = response.text.strip().lower()
             
             # Validate response
-            valid_categories = ['can', 'plastic', 'paper', 'glass']
+            valid_categories = ['can', 'plastic', 'paper', 'other', 'no_object']
             
             if classification_text in valid_categories:
                 result_classification = classification_text
@@ -181,7 +228,7 @@ Do not explain."""
                         result_classification = category
                         break
                 else:
-                    result_classification = 'unknown'
+                    result_classification = 'no_object'
             
             return {
                 'classification': result_classification,
@@ -244,7 +291,7 @@ Do not explain."""
             self.latest_frame = display_frame
             
             # Handle motion detection and classification
-            if motion_detected and not self.is_in_cooldown() and not self.classification_in_progress:
+            if motion_detected and not self.is_in_cooldown() and not self.classification_in_progress and self.motion_detection_enabled:
                 print(f"🎯 Motion detected! Capturing frame #{frame_count}")
                 self._start_classification_thread(frame.copy())
             
@@ -283,7 +330,8 @@ Do not explain."""
         # Add status text
         status_text = "READY" if not motion_detected else "MOTION"
         api_status = " | API: BUSY" if self.classification_in_progress else " | API: READY"
-        cv2.putText(display_frame, f"Status: {status_text}{api_status}", (10, display_frame.shape[0] - 20), 
+        motion_status = " | MOTION: DISABLED" if not self.motion_detection_enabled else ""
+        cv2.putText(display_frame, f"Status: {status_text}{api_status}{motion_status}", (10, display_frame.shape[0] - 20), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
         return display_frame
@@ -310,13 +358,97 @@ Do not explain."""
             # Print results
             timestamp = datetime.now().strftime("%H:%M:%S")
             if result['classification'] != 'error':
-                print(f"✅ [{timestamp}] Classification: {result['classification'].upper()}")
-                print(f"   Processing time: {result['processing_time']:.0f}ms")
+                classification = result['classification'].lower()
+                
+                if classification == 'no_object':
+                    print(f"📭 [{timestamp}] No object detected on plate - no action needed")
+                else:
+                    print(f"✅ [{timestamp}] Classification: {classification.upper()}")
+                    print(f"   Processing time: {result['processing_time']:.0f}ms")
+                    
+                    # Trigger navigation to ThankYou page immediately after classification
+                    self.navigation_trigger = {
+                        'action': 'show_thankyou',
+                        'timestamp': time.time(),
+                        'classified_item': classification
+                    }
+                    print(f"🎉 Navigation trigger set: ThankYou page for {classification}")
+                    
+                    # Call robot movement API for detected classifications
+                    if classification in self.robot_movements:
+                        print(f"🔍 {classification.capitalize()} detected! Triggering robot movement...")
+                        # Disable motion detection during robot operation
+                        self.motion_detection_enabled = False
+                        print("🚫 Motion detection disabled during robot operation")
+                        
+                        robot_success = self.call_robot_movement_api(classification)
+                        if robot_success:
+                            print(f"🎯 Robot movement for {classification} completed successfully")
+                        else:
+                            print(f"⚠️ Robot movement for {classification} failed, but classification completed")
+                        
+                        # Re-enable motion detection after additional 2 seconds
+                        print("⏱️ Waiting additional 2 seconds before re-enabling motion detection...")
+                        time.sleep(2)
+                        self.motion_detection_enabled = True
+                        print("✅ Motion detection re-enabled")
+                        
             else:
                 print(f"❌ [{timestamp}] Classification failed: {result.get('error', 'Unknown error')}")
                 
         finally:
             self.classification_in_progress = False
+    
+    def call_robot_movement_api(self, classification):
+        """Call robot movement API for detected classification"""
+        try:
+            if classification not in self.robot_movements:
+                print(f"⚠️ No robot movement configured for: {classification}")
+                return False
+                
+            movement = self.robot_movements[classification]
+            api_url = f"{self.robot_base_url}?spin={movement['spin']}&pivot={movement['pivot']}"
+            
+            print(f"🤖 Calling robot movement API for {classification}: {api_url}")
+            response = requests.get(
+                api_url,
+                timeout=self.robot_api_timeout
+            )
+            
+            if response.status_code == 200:
+                print(f"✅ Robot movement API call for {classification} successful")
+                
+                # Wait 2 seconds before resetting to neutral position
+                print("⏱️ Waiting 2 seconds before reset...")
+                time.sleep(2)
+                
+                # Reset robot to neutral position after movement
+                reset_url = f"{self.robot_base_url}?spin=0&pivot=0"
+                print(f"🔄 Resetting robot to neutral position: {reset_url}")
+                
+                try:
+                    reset_response = requests.get(reset_url, timeout=self.robot_api_timeout)
+                    if reset_response.status_code == 200:
+                        print("✅ Robot reset to neutral position successful")
+                    else:
+                        print(f"⚠️ Robot reset failed with status code: {reset_response.status_code}")
+                except Exception as reset_error:
+                    print(f"⚠️ Robot reset failed: {str(reset_error)}")
+                
+                return True
+            else:
+                print(f"⚠️ Robot API returned status code: {response.status_code}")
+                return False
+                
+        except requests.exceptions.Timeout:
+            print(f"❌ Robot API call for {classification} timed out")
+            return False
+        except requests.exceptions.ConnectionError:
+            print(f"❌ Could not connect to robot API for {classification}")
+            return False
+        except Exception as e:
+            print(f"❌ Robot API call for {classification} failed: {str(e)}")
+            return False
 
 # Global instance of the trash bin system
 trash_bin = SmartTrashBinAPI()
@@ -515,6 +647,29 @@ def trigger_classification():
             'message': f'Error triggering classification: {str(e)}'
         })
 
+@app.route('/navigation_trigger')
+def get_navigation_trigger():
+    """Check for navigation triggers and consume them"""
+    try:
+        if trash_bin.navigation_trigger is not None:
+            trigger = trash_bin.navigation_trigger
+            trash_bin.navigation_trigger = None  # Reset trigger after reading
+            return jsonify({
+                'trigger': True,
+                'action': trigger['action'],
+                'timestamp': trigger['timestamp'],
+                'classified_item': trigger['classified_item']
+            })
+        else:
+            return jsonify({
+                'trigger': False
+            })
+    except Exception as e:
+        return jsonify({
+            'trigger': False,
+            'error': f'Error checking navigation trigger: {str(e)}'
+        })
+
 if __name__ == "__main__":
     print("🚀 Starting Smart Trash Bin Flask API...")
     print("=" * 60)
@@ -525,6 +680,7 @@ if __name__ == "__main__":
     print("   POST /stop          - Stop camera system")
     print("   GET  /status        - Get system status")
     print("   POST /classify      - Manual classification trigger")
+    print("   GET  /navigation_trigger - Check for navigation events")
     print("=" * 60)
     print("📱 Frontend Integration:")
     print("   Video stream URL: http://localhost:5000/video_feed")
