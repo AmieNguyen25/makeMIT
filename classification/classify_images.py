@@ -50,38 +50,49 @@ class SmartTrashBinAPI:
         
     def initialize_camera(self):
         """Initialize webcam"""
-        print(" Initializing camera...")
+        global has_camera
+        print("📷 Initializing camera...")
         
         # Try different camera indices
         for camera_index in range(5):  # Try cameras 0-4
-            print(f"Trying camera index {camera_index}...")
+            print(f"🔍 Trying camera index {camera_index}...")
             self.cap = cv2.VideoCapture(camera_index)
             
             if self.cap.isOpened():
-                # Test if camera can actually read frames
+                # Test if camera can actually read frames with timeout
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer to avoid lag
                 ret, _ = self.cap.read()
                 if ret:
-                    print(f"Camera {camera_index} opened successfully!")
+                    print(f"✅ Camera {camera_index} opened successfully!")
                     break
                 else:
+                    print(f"❌ Camera index {camera_index} opened but cannot read frames")
                     self.cap.release()
+            else:
+                print(f"❌ Camera index {camera_index} failed to open")
             
             if camera_index == 4:  # Last attempt
-                print(" Error: Could not open any camera (tried indices 0-4)")
+                print("⚠️ No camera detected - enabling web-only mode")
+                self.cap = None
+                has_camera = False
                 return False
             
-        # Set camera resolution
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        
-        # Warm up the camera
-        for _ in range(10):
+        # Set camera resolution if we have a working camera
+        if self.cap and self.cap.isOpened():
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            
+            # Quick warm up test
             ret, _ = self.cap.read()
             if not ret:
-                print(" Error: Could not read from camera")
+                print("❌ Error: Could not read from camera during warmup")
+                self.cap.release()
+                self.cap = None
+                has_camera = False
                 return False
                 
-        print(" Camera initialized successfully")
+        print("✅ Camera initialized successfully")
+        has_camera = True
         return True
     
     def detect_motion(self, frame):
