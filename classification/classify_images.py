@@ -43,6 +43,7 @@ class SmartTrashBinAPI:
         self.cooldown_period = 5.0  # 5 seconds
         self.motion_threshold = 5000  # Minimum contour area for motion detection
         self.classification_in_progress = False
+        self.motion_detection_enabled = True  # Flag to disable motion during robot operations
         self.latest_classification_result = None
         self.latest_frame = None
         self.frame_queue = queue.Queue(maxsize=10)
@@ -266,7 +267,7 @@ Do not explain. Do not detect the plate. Focus on the primary object."""
             self.latest_frame = display_frame
             
             # Handle motion detection and classification
-            if motion_detected and not self.is_in_cooldown() and not self.classification_in_progress:
+            if motion_detected and not self.is_in_cooldown() and not self.classification_in_progress and self.motion_detection_enabled:
                 print(f"🎯 Motion detected! Capturing frame #{frame_count}")
                 self._start_classification_thread(frame.copy())
             
@@ -305,7 +306,8 @@ Do not explain. Do not detect the plate. Focus on the primary object."""
         # Add status text
         status_text = "READY" if not motion_detected else "MOTION"
         api_status = " | API: BUSY" if self.classification_in_progress else " | API: READY"
-        cv2.putText(display_frame, f"Status: {status_text}{api_status}", (10, display_frame.shape[0] - 20), 
+        motion_status = " | MOTION: DISABLED" if not self.motion_detection_enabled else ""
+        cv2.putText(display_frame, f"Status: {status_text}{api_status}{motion_status}", (10, display_frame.shape[0] - 20), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
         return display_frame
@@ -343,11 +345,21 @@ Do not explain. Do not detect the plate. Focus on the primary object."""
                     # Call robot movement API for detected classifications
                     if classification in self.robot_movements:
                         print(f"🔍 {classification.capitalize()} detected! Triggering robot movement...")
+                        # Disable motion detection during robot operation
+                        self.motion_detection_enabled = False
+                        print("🚫 Motion detection disabled during robot operation")
+                        
                         robot_success = self.call_robot_movement_api(classification)
                         if robot_success:
                             print(f"🎯 Robot movement for {classification} completed successfully")
                         else:
                             print(f"⚠️ Robot movement for {classification} failed, but classification completed")
+                        
+                        # Re-enable motion detection after additional 2 seconds
+                        print("⏱️ Waiting additional 2 seconds before re-enabling motion detection...")
+                        time.sleep(2)
+                        self.motion_detection_enabled = True
+                        print("✅ Motion detection re-enabled")
                         
             else:
                 print(f"❌ [{timestamp}] Classification failed: {result.get('error', 'Unknown error')}")
