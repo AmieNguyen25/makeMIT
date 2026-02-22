@@ -39,13 +39,13 @@ export default function HumanTrackingEyes({ onNavigate }) {
                     const cameraWidth = 640
                     const cameraHeight = 480
 
-                    // Calculate horizontal offset (-40 to 40 like mouse tracking) - FLIPPED for natural movement
+                    // Calculate horizontal offset (-70 to 70 for more movement range) - FLIPPED for natural movement
                     const horizontalPercent = data.x / cameraWidth
-                    const newOffset = (0.5 - horizontalPercent) * 40  // Flipped X-axis
+                    const newOffset = (0.5 - horizontalPercent) * 70  // Increased range
 
                     // Calculate vertical offset for more natural tracking
                     const verticalPercent = data.y / cameraHeight
-                    const newVerticalOffset = (verticalPercent - 0.5) * 20
+                    const newVerticalOffset = (verticalPercent - 0.5) * 45
 
                     setOffset(newOffset)
                     setVerticalOffset(newVerticalOffset)
@@ -79,9 +79,9 @@ export default function HumanTrackingEyes({ onNavigate }) {
 
         const handleMouse = (e) => {
             const percent = e.clientX / window.innerWidth
-            const newOffset = (percent - 0.5) * 40
+            const newOffset = (percent - 0.5) * 70
             const verticalPercent = e.clientY / window.innerHeight
-            const newVerticalOffset = (verticalPercent - 0.5) * 20
+            const newVerticalOffset = (verticalPercent - 0.5) * 45
 
             setOffset(newOffset)
             setVerticalOffset(newVerticalOffset)
@@ -145,11 +145,11 @@ export default function HumanTrackingEyes({ onNavigate }) {
     }
 
     const pixelEyeStyle = {
-        width: "200px",
-        height: "120px",
+        width: "140px",
+        height: "80px",
         background: trackingMode === "human" ?
             (humanDetected ? "#00ff41" : "#ff4444") : "#00ff41",
-        borderRadius: "60px",
+        borderRadius: "40px",
         transform: `translate(${offset}px, ${verticalOffset}px)`,
         transition: "transform 0.15s ease-out, background-color 0.3s ease",
         boxShadow: trackingMode === "human" ?
