@@ -73,11 +73,7 @@ export default function TrashTracker({ onNavigate }) {
               incrementCount('trash'); // 'other' and unknown types
             }
 
-            // After counter is updated, wait 2 seconds before checking navigation trigger
-            console.log('📊 Counter updated, waiting 2 seconds before navigation...');
-            setTimeout(() => {
-              checkNavigationTriggerAfterCount();
-            }, 2000); // 2 second delay before navigation to thank you page
+            console.log('📊 Counter updated for:', classification);
           }
         }
       } else {
@@ -86,30 +82,6 @@ export default function TrashTracker({ onNavigate }) {
     } catch (error) {
       console.error('Error fetching camera status:', error);
       setCameraSystem(prev => ({ ...prev, systemStatus: 'disconnected' }));
-    }
-  };
-
-  // Check for navigation triggers after counter update
-  const checkNavigationTriggerAfterCount = async () => {
-    try {
-      const response = await fetch(`${CLASSIFICATION_API_URL}/navigation_trigger`);
-      if (response.ok) {
-        const data = await response.json();
-        if (data.trigger && data.action === 'show_thankyou') {
-          console.log(`🎉 Navigation trigger after count: ${data.action} for ${data.classified_item}`);
-
-          // Navigate to ThankYou page
-          onNavigate('thankyou');
-
-          // Set timer to return to tracker after 4 seconds
-          setTimeout(() => {
-            console.log('⏰ Returning to TrashTracker after 4 seconds');
-            onNavigate('tracker');
-          }, 4000);
-        }
-      }
-    } catch (error) {
-      console.error('Error checking navigation trigger after count:', error);
     }
   };
 

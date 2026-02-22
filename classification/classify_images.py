@@ -160,17 +160,17 @@ class SmartTrashBinAPI:
             image_base64 = self.frame_to_base64(resized_frame)
             
             # Classification prompt
-            prompt = """You are a strict visual classification system.
+            prompt = """You are a visual classification system.
 
-Analyze the image and determine whether there is a physical object resting on the brown plate.
+If there is a motion detection, then analyze the image and determine whether there is a physical object resting on the brown plate.
 
 The brown plate is the background and must NEVER be classified.
 
-Always etermine if the plate is completely empty.
+Always determine if the plate is completely empty.
 
-If the plate is completely empty and no physical object is resting on it, return exactly: no_object
+If the plate is completely empty, no motion detection, and no physical object is resting on it, return exactly: no_object
 
-
+If motion detection took place, then analyze the image and determine if there is a physical object resting on the brown plate.
 
 Ignore:
 The brown plate
