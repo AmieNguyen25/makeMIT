@@ -44,6 +44,7 @@ class SmartTrashBinAPI:
         self.motion_threshold = 5000  # Minimum contour area for motion detection
         self.classification_in_progress = False
         self.motion_detection_enabled = True  # Flag to disable motion during robot operations
+        self.navigation_trigger = None  # Track when to trigger navigation to ThankYou page
         self.latest_classification_result = None
         self.latest_frame = None
         self.frame_queue = queue.Queue(maxsize=10)
@@ -93,6 +94,11 @@ class SmartTrashBinAPI:
             
         # Set camera resolution if we have a working camera
         if self.cap and self.cap.isOpened():
+            # Reduce exposure for better image quality
+            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)  # Disable auto-exposure
+            self.cap.set(cv2.CAP_PROP_EXPOSURE, -6)  # Reduce exposure (typical range: -13 to -1)
+            print("📸 Camera exposure reduced for better image quality")
+            
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             
@@ -154,25 +160,43 @@ class SmartTrashBinAPI:
             image_base64 = self.frame_to_base64(resized_frame)
             
             # Classification prompt
-            prompt = """Classify the primary object based on material composition, not brand or label.
-IMPORTANT: If you only see an empty black plate with no object on it, respond with "no_object".
-If there IS an object ON the plate, classify only the PRIMARY OBJECT (not the plate) as:
+            prompt = """You are a strict visual classification system.
 
-- no_object (if the black plate is empty with no object on it)
-- can (metal, aluminum beverage cans)
-- plastic (bottles)
-- paper (paper, cardboard, newspapers, paper materials)
-- other (any object that does not fit the above categories)
+Analyze the image and determine whether there is a physical object resting on the brown plate.
+
+The brown plate is the background and must NEVER be classified.
+
+Always etermine if the plate is completely empty.
+
+If the plate is completely empty and no physical object is resting on it, return exactly: no_object
 
 
-Rules:
-- Empty plate = "no_object"
-- Plate with object = classify the object only
-- Ignore the plate itself in classification
 
-Return exactly one lowercase word.
-If uncertain, infer based on visible material texture.
-Do not explain. Do not detect the plate. Focus on the primary object."""
+Ignore:
+The brown plate
+The brown plate is not the object and should not be classified
+The brown plate is the background
+Shadows
+Reflections
+Printed images
+Logos or labels
+Designs on the plate
+if there is nothing on the plate, the place is empty and should be classified as no_object.
+Classify only real, physical objects based on material and structure.
+
+Allowed categories (return exactly one lowercase word):
+-no_object : plate is completely empty
+-can: aluminum or metal beverage can (even crushed)
+-plastic: plastic bottle or rigid plastic container, a crushed water bottle, or any object made primarily of plastic
+-paper: paper, newspaper, napkin
+- other: any object not listed above (food, fabric, electronics, etc.)
+
+Strict output rules:
+-Return exactly ONE lowercase word
+-No punctuation
+-No explanation
+-No extra text
+-No quotes"""
             
             # Create model and generate content
             model = genai.GenerativeModel('gemini-2.5-flash')
@@ -341,6 +365,14 @@ Do not explain. Do not detect the plate. Focus on the primary object."""
                 else:
                     print(f"✅ [{timestamp}] Classification: {classification.upper()}")
                     print(f"   Processing time: {result['processing_time']:.0f}ms")
+                    
+                    # Trigger navigation to ThankYou page immediately after classification
+                    self.navigation_trigger = {
+                        'action': 'show_thankyou',
+                        'timestamp': time.time(),
+                        'classified_item': classification
+                    }
+                    print(f"🎉 Navigation trigger set: ThankYou page for {classification}")
                     
                     # Call robot movement API for detected classifications
                     if classification in self.robot_movements:
@@ -615,6 +647,29 @@ def trigger_classification():
             'message': f'Error triggering classification: {str(e)}'
         })
 
+@app.route('/navigation_trigger')
+def get_navigation_trigger():
+    """Check for navigation triggers and consume them"""
+    try:
+        if trash_bin.navigation_trigger is not None:
+            trigger = trash_bin.navigation_trigger
+            trash_bin.navigation_trigger = None  # Reset trigger after reading
+            return jsonify({
+                'trigger': True,
+                'action': trigger['action'],
+                'timestamp': trigger['timestamp'],
+                'classified_item': trigger['classified_item']
+            })
+        else:
+            return jsonify({
+                'trigger': False
+            })
+    except Exception as e:
+        return jsonify({
+            'trigger': False,
+            'error': f'Error checking navigation trigger: {str(e)}'
+        })
+
 if __name__ == "__main__":
     print("🚀 Starting Smart Trash Bin Flask API...")
     print("=" * 60)
@@ -625,6 +680,7 @@ if __name__ == "__main__":
     print("   POST /stop          - Stop camera system")
     print("   GET  /status        - Get system status")
     print("   POST /classify      - Manual classification trigger")
+    print("   GET  /navigation_trigger - Check for navigation events")
     print("=" * 60)
     print("📱 Frontend Integration:")
     print("   Video stream URL: http://localhost:5000/video_feed")

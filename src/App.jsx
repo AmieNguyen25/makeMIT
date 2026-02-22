@@ -10,38 +10,8 @@ function App() {
   const audioRef = useRef(null)
 
   const speak = async (text) => {
-    console.log('🎤 Attempting to speak:', text)
-    console.log('🌐 Using ElevenLabs API...')
-
-    try {
-      const res = await fetch("http://127.0.0.1:5000/tts", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ text }),
-      });
-
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`)
-      }
-
-      const data = await res.json();
-      console.log('✅ ElevenLabs Response received')
-
-      if (data.audio) {
-        console.log('🔊 Playing ElevenLabs audio (Female Voice)')
-        const audio = new Audio("data:audio/mp3;base64," + data.audio);
-        await audio.play();
-        console.log('✅ ElevenLabs audio played successfully!')
-      } else {
-        throw new Error('No audio data received')
-      }
-    } catch (err) {
-      console.error("❌ ElevenLabs failed:", err)
-      console.log('🔄 Falling back to browser TTS')
-      useBrowserTTS(text)
-    }
+    console.log('🎤 Using browser TTS:', text)
+    useBrowserTTS(text)
   }
 
   const useBrowserTTS = (text) => {

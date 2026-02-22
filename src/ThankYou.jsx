@@ -4,7 +4,7 @@ import "./ThankYou.css"
 export default function ThankYou({ onNavigate, speak }) {
   const [showContent, setShowContent] = useState(false)
   const [particles, setParticles] = useState([])
-  
+
   useEffect(() => {
     // Trigger content animation
     setTimeout(() => setShowContent(true), 500)
@@ -21,95 +21,41 @@ export default function ThankYou({ onNavigate, speak }) {
     }
     setParticles(newParticles)
 
-    // 🔊 Trigger FAST voice after animation starts
-    const voiceTimer = setTimeout(async () => {
-      console.log('🎤 Auto-playing with FAST endpoint...')
-      const startTime = performance.now()
-      
-      try {
-        // Single fast API call for generation + TTS
-        const res = await fetch("http://127.0.0.1:5000/fast-thankyou-speech", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({}),
-        });
-
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}: ${res.statusText}`)
-        }
-
-        const data = await res.json();
-        const clientTime = performance.now() - startTime
-        console.log(`⚡ AUTO-FAST Response: ${clientTime.toFixed(0)}ms client + ${data.processing_time_ms}ms server`)
-        console.log(`📝 Auto-message (${data.source}): ${data.message}`)
-
-        if (data.audio) {
-          console.log('🔊 Auto-playing FAST ElevenLabs audio')
-          const audio = new Audio("data:audio/mp3;base64," + data.audio);
-          await audio.play();
-          console.log('✅ FAST auto-audio played successfully!')
-        } else if (data.use_browser_tts) {
-          console.log('🔄 Auto-playing browser TTS fallback')
-          useBrowserTTS(data.message)
-        } else {
-          throw new Error('No audio data from fast endpoint')
-        }
-      } catch (err) {
-        console.error("❌ Fast auto-speak failed:", err)
-        // Fallback to passed speak function
-        if (speak) {
-          console.log('🔄 Using original fallback for auto-speak')
-          speak("Thanks for recycling!")
-        }
-      }
+    // 🔊 Trigger voice after animation starts
+    const voiceTimer = setTimeout(() => {
+      console.log('🎤 Auto-playing with browser TTS...')
+      useBrowserTTS("Thanks for recycling!")
     }, 500)
 
     return () => clearTimeout(voiceTimer)
   }, [speak])
 
-  const handleSpeak = async () => {
-    console.log('🎤 ThankYou: Using FAST combined endpoint...')
-    const startTime = performance.now()
-    
-    try {
-      // Single fast API call for generation + TTS
-      const res = await fetch("http://127.0.0.1:5000/fast-thankyou-speech", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({}),
-      });
+  const useBrowserTTS = (text) => {
+    if ('speechSynthesis' in window) {
+      speechSynthesis.cancel()
 
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`)
+      const utterance = new SpeechSynthesisUtterance(text)
+      const voices = speechSynthesis.getVoices()
+
+      const femaleVoice = voices.find(voice =>
+        voice.name.toLowerCase().includes('female') ||
+        voice.name.toLowerCase().includes('zira') ||
+        voice.name.toLowerCase().includes('hazel') ||
+        voice.name.toLowerCase().includes('samantha')
+      )
+
+      if (femaleVoice) {
+        utterance.voice = femaleVoice
       }
 
-      const data = await res.json();
-      const clientTime = performance.now() - startTime
-      console.log(`⚡ FAST Response: ${clientTime.toFixed(0)}ms client + ${data.processing_time_ms}ms server`)
-      console.log(`📝 Message (${data.source}): ${data.message}`)
+      utterance.rate = 0.9
+      utterance.pitch = 1.1
+      utterance.volume = 0.8
 
-      if (data.audio) {
-        console.log('🔊 Playing FAST ElevenLabs audio')
-        const audio = new Audio("data:audio/mp3;base64," + data.audio);
-        await audio.play();
-        console.log('✅ FAST audio played successfully!')
-      } else if (data.use_browser_tts) {
-        console.log('🔄 Using browser TTS fallback')
-        useBrowserTTS(data.message)
-      } else {
-        throw new Error('No audio data received')
-      }
-    } catch (err) {
-      console.error("❌ Fast endpoint failed:", err)
-      // Fallback to the passed speak function
-      if (speak) {
-        console.log('🔄 Using original speak function')
-        speak("Thanks for recycling!")
-      }
+      speechSynthesis.speak(utterance)
+      console.log('🔊 Browser TTS playing')
+    } else {
+      console.log('❌ Browser TTS not supported')
     }
   }
 
@@ -140,43 +86,20 @@ export default function ThankYou({ onNavigate, speak }) {
       </h1>
 
       <p className={`thank-you-message ${showContent ? 'show' : 'hide'}`}>
-        Your contribution to recycling and waste management makes a difference! 
-        Every item you've sorted helps create a more sustainable future for our planet. 
+        Your contribution to recycling and waste management makes a difference!
+        Every item you've sorted helps create a more sustainable future for our planet.
         Together, we're building a cleaner, greener world.
       </p>
-
-      <div className={`button-container ${showContent ? 'show' : 'hide'}`}>
-        <button
-          className="thank-you-button"
-          onClick={() => onNavigate('tracker')}
-        >
-          🗑️ Back to Tracker
-        </button>
-
-        <button
-          className="thank-you-button"
-          onClick={handleSpeak}
-        >
-          🔊 Speak Message
-        </button>
-
-        <button
-          className="thank-you-button"
-          onClick={() => onNavigate('eyes')}
-        >
-          👁️ Eyes Page
-        </button>
-      </div>
 
       {/* Decorative Elements */}
       <div className="decorative-element decorative-recycle">
         ♻️
       </div>
-      
+
       <div className="decorative-element decorative-plant">
         🌱
       </div>
-      
+
       <div className="decorative-element decorative-earth">
         🌍
       </div>

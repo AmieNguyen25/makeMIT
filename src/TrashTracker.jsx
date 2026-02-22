@@ -49,37 +49,83 @@ export default function TrashTracker({ onNavigate }) {
           systemStatus: 'connected'
         });
 
-        // Auto-increment counts based on NEW classification only
+        // Process new classifications and update counts
         if (data.latest_classification &&
-          data.latest_classification.classification !== 'error') {
+          data.latest_classification.classification &&
+          data.latest_classification.classification !== 'error' &&
+          data.latest_classification.classification !== 'no_object') {
 
-          const currentClassificationKey = getClassificationKey(data.latest_classification);
+          const classificationKey = getClassificationKey(data.latest_classification);
 
-          console.log('Current key:', currentClassificationKey);
-          console.log('Last processed key:', lastProcessedRef.current);
-          console.log('Keys match?', currentClassificationKey === lastProcessedRef.current);
+          if (classificationKey && classificationKey !== lastProcessedRef.current) {
+            console.log('🎯 New classification detected:', data.latest_classification.classification);
+            lastProcessedRef.current = classificationKey;
 
-          // Only count if this is a truly new classification (different processing instance)
-          if (currentClassificationKey && currentClassificationKey !== lastProcessedRef.current) {
-            console.log('🟢 NEW CLASSIFICATION DETECTED - Incrementing count');
+            // Update counts based on classification
+            const classification = data.latest_classification.classification.toLowerCase();
+            if (classification === 'paper') {
+              incrementCount('paper');
+            } else if (classification === 'can') {
+              incrementCount('cans');
+            } else if (classification === 'plastic') {
+              incrementCount('plasticBottles');
+            } else {
+              incrementCount('trash'); // 'other' and unknown types
+            }
 
-            const category = data.latest_classification.classification;
-            if (category === 'can') incrementCount('cans');
-            else if (category === 'plastic') incrementCount('plasticBottles');
-            else if (category === 'paper') incrementCount('paper');
-            else incrementCount('trash');
-
-            // Mark this classification as processed using the ref
-            lastProcessedRef.current = currentClassificationKey;
-          } else {
-            console.log('🔴 Same classification - not counting');
+            // After counter is updated, wait 2 seconds before checking navigation trigger
+            console.log('📊 Counter updated, waiting 2 seconds before navigation...');
+            setTimeout(() => {
+              checkNavigationTriggerAfterCount();
+            }, 2000); // 2 second delay before navigation to thank you page
           }
         }
       } else {
         setCameraSystem(prev => ({ ...prev, systemStatus: 'error' }));
       }
     } catch (error) {
+      console.error('Error fetching camera status:', error);
       setCameraSystem(prev => ({ ...prev, systemStatus: 'disconnected' }));
+    }
+  };
+
+  // Check for navigation triggers after counter update
+  const checkNavigationTriggerAfterCount = async () => {
+    try {
+      const response = await fetch(`${CLASSIFICATION_API_URL}/navigation_trigger`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.trigger && data.action === 'show_thankyou') {
+          console.log(`🎉 Navigation trigger after count: ${data.action} for ${data.classified_item}`);
+
+          // Navigate to ThankYou page
+          onNavigate('thankyou');
+
+          // Set timer to return to tracker after 4 seconds
+          setTimeout(() => {
+            console.log('⏰ Returning to TrashTracker after 4 seconds');
+            onNavigate('tracker');
+          }, 4000);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking navigation trigger after count:', error);
+    }
+  };
+
+  // Check for navigation triggers (regular polling - fallback)
+  const checkNavigationTrigger = async () => {
+    // This is now a fallback check, main navigation happens after counter update
+    try {
+      const response = await fetch(`${CLASSIFICATION_API_URL}/navigation_trigger`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.trigger && data.action === 'show_thankyou') {
+          console.log(`🎉 Fallback navigation trigger: ${data.action} for ${data.classified_item}`);
+        }
+      }
+    } catch (error) {
+      console.error('Error in fallback navigation trigger check:', error);
     }
   };
 
@@ -113,10 +159,10 @@ export default function TrashTracker({ onNavigate }) {
     }
   };
 
-  // Poll camera status every 2 seconds
+  // Poll camera status every 2 seconds (navigation happens after counter updates)
   useEffect(() => {
     fetchCameraStatus(); // Initial fetch
-    const interval = setInterval(fetchCameraStatus, 2000);
+    const interval = setInterval(fetchCameraStatus, 2000); // Only poll status, navigation triggered after count
     return () => clearInterval(interval);
   }, []);
 
