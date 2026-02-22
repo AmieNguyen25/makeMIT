@@ -11,6 +11,7 @@ from flask_cors import CORS
 import threading
 import queue
 import json
+import requests
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -47,6 +48,18 @@ class SmartTrashBinAPI:
         self.frame_queue = queue.Queue(maxsize=10)
         self.running = False
         self.camera_thread = None
+        
+        # Robot movement API configuration
+        self.robot_base_url = "http://10.250.167.161/move"
+        self.robot_api_timeout = 5.0  # seconds
+        
+        # Robot movement parameters for each classification
+        self.robot_movements = {
+            'plastic': {'spin': 65, 'pivot': -40},
+            'can': {'spin': 65, 'pivot': 40},
+            'paper': {'spin': -65, 'pivot': -40},
+            'other': {'spin': -65, 'pivot': 40}
+        }
         
     def initialize_camera(self):
         """Initialize webcam"""
@@ -141,15 +154,17 @@ class SmartTrashBinAPI:
             
             # Classification prompt
             prompt = """Classify the primary object based on material composition, not brand or label.
-
+the primary object located on a plastic plate in the center of the image.
 Categories:
+- 
 - can (metal, aluminum beverage cans)
 - plastic (PET bottles, wrappers)
 - paper (cardboard, newspapers, paper materials)
+- other (any object that does not fit the above categories)
 
 Return exactly one lowercase word.
 If uncertain, infer based on visible material texture.
-Do not explain."""
+Do not explain. Do not detect the plastic plate. Focus on the primary object."""
             
             # Create model and generate content
             model = genai.GenerativeModel('gemini-2.5-flash')
@@ -170,7 +185,7 @@ Do not explain."""
             classification_text = response.text.strip().lower()
             
             # Validate response
-            valid_categories = ['can', 'plastic', 'paper', 'glass']
+            valid_categories = ['can', 'plastic', 'paper', 'other']
             
             if classification_text in valid_categories:
                 result_classification = classification_text
@@ -312,11 +327,55 @@ Do not explain."""
             if result['classification'] != 'error':
                 print(f"✅ [{timestamp}] Classification: {result['classification'].upper()}")
                 print(f"   Processing time: {result['processing_time']:.0f}ms")
+                
+                # Call robot movement API for detected classifications
+                classification = result['classification'].lower()
+                if classification in self.robot_movements:
+                    print(f"🔍 {classification.capitalize()} detected! Triggering robot movement...")
+                    robot_success = self.call_robot_movement_api(classification)
+                    if robot_success:
+                        print(f"🎯 Robot movement for {classification} completed successfully")
+                    else:
+                        print(f"⚠️ Robot movement for {classification} failed, but classification completed")
+                        
             else:
                 print(f"❌ [{timestamp}] Classification failed: {result.get('error', 'Unknown error')}")
                 
         finally:
             self.classification_in_progress = False
+    
+    def call_robot_movement_api(self, classification):
+        """Call robot movement API for detected classification"""
+        try:
+            if classification not in self.robot_movements:
+                print(f"⚠️ No robot movement configured for: {classification}")
+                return False
+                
+            movement = self.robot_movements[classification]
+            api_url = f"{self.robot_base_url}?spin={movement['spin']}&pivot={movement['pivot']}"
+            
+            print(f"🤖 Calling robot movement API for {classification}: {api_url}")
+            response = requests.get(
+                api_url,
+                timeout=self.robot_api_timeout
+            )
+            
+            if response.status_code == 200:
+                print(f"✅ Robot movement API call for {classification} successful")
+                return True
+            else:
+                print(f"⚠️ Robot API returned status code: {response.status_code}")
+                return False
+                
+        except requests.exceptions.Timeout:
+            print(f"❌ Robot API call for {classification} timed out")
+            return False
+        except requests.exceptions.ConnectionError:
+            print(f"❌ Could not connect to robot API for {classification}")
+            return False
+        except Exception as e:
+            print(f"❌ Robot API call for {classification} failed: {str(e)}")
+            return False
 
 # Global instance of the trash bin system
 trash_bin = SmartTrashBinAPI()
