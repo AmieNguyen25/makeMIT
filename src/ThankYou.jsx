@@ -21,19 +21,19 @@ export default function ThankYou({ onNavigate, speak }) {
     }
     setParticles(newParticles)
 
-    // 🔊 Trigger ElevenLabs voice after animation starts
+    // 🔊 Trigger FAST voice after animation starts
     const voiceTimer = setTimeout(async () => {
-      console.log('🎤 Auto-speaking with ElevenLabs on ThankYou page load...')
+      console.log('🎤 Auto-playing with FAST endpoint...')
+      const startTime = performance.now()
       
       try {
-        const text = "Thank you for recycling. Your action helps create a cleaner and greener future."
-        
-        const res = await fetch("http://127.0.0.1:5000/tts", {
+        // Single fast API call for generation + TTS
+        const res = await fetch("http://127.0.0.1:5000/fast-thankyou-speech", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({}),
         });
 
         if (!res.ok) {
@@ -41,41 +41,46 @@ export default function ThankYou({ onNavigate, speak }) {
         }
 
         const data = await res.json();
-        console.log('✅ ElevenLabs auto-speak response received')
+        const clientTime = performance.now() - startTime
+        console.log(`⚡ AUTO-FAST Response: ${clientTime.toFixed(0)}ms client + ${data.processing_time_ms}ms server`)
+        console.log(`📝 Auto-message (${data.source}): ${data.message}`)
 
         if (data.audio) {
-          console.log('🔊 Auto-playing ElevenLabs Female Voice')
+          console.log('🔊 Auto-playing FAST ElevenLabs audio')
           const audio = new Audio("data:audio/mp3;base64," + data.audio);
           await audio.play();
-          console.log('✅ ElevenLabs auto-speak played successfully!')
+          console.log('✅ FAST auto-audio played successfully!')
+        } else if (data.use_browser_tts) {
+          console.log('🔄 Auto-playing browser TTS fallback')
+          useBrowserTTS(data.message)
         } else {
-          throw new Error('No audio data from ElevenLabs')
+          throw new Error('No audio data from fast endpoint')
         }
       } catch (err) {
-        console.error("❌ ElevenLabs auto-speak failed:", err)
+        console.error("❌ Fast auto-speak failed:", err)
         // Fallback to passed speak function
         if (speak) {
-          console.log('🔄 Using fallback for auto-speak')
-          speak("Thank you for recycling. Your action helps create a cleaner and greener future.")
+          console.log('🔄 Using original fallback for auto-speak')
+          speak("Thanks for recycling!")
         }
       }
-    }, 1000)
+    }, 500)
 
     return () => clearTimeout(voiceTimer)
   }, [speak])
 
   const handleSpeak = async () => {
-    console.log('🎤 ThankYou: Speaking with ElevenLabs API...')
+    console.log('🎤 ThankYou: Using FAST combined endpoint...')
+    const startTime = performance.now()
     
     try {
-      const text = "Thank you for recycling. Your action helps create a cleaner and greener future."
-      
-      const res = await fetch("http://127.0.0.1:5000/tts", {
+      // Single fast API call for generation + TTS
+      const res = await fetch("http://127.0.0.1:5000/fast-thankyou-speech", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({}),
       });
 
       if (!res.ok) {
@@ -83,22 +88,27 @@ export default function ThankYou({ onNavigate, speak }) {
       }
 
       const data = await res.json();
-      console.log('✅ ElevenLabs Response received for ThankYou')
+      const clientTime = performance.now() - startTime
+      console.log(`⚡ FAST Response: ${clientTime.toFixed(0)}ms client + ${data.processing_time_ms}ms server`)
+      console.log(`📝 Message (${data.source}): ${data.message}`)
 
       if (data.audio) {
-        console.log('🔊 Playing ElevenLabs Female Voice for ThankYou')
+        console.log('🔊 Playing FAST ElevenLabs audio')
         const audio = new Audio("data:audio/mp3;base64," + data.audio);
         await audio.play();
-        console.log('✅ ElevenLabs ThankYou audio played successfully!')
+        console.log('✅ FAST audio played successfully!')
+      } else if (data.use_browser_tts) {
+        console.log('🔄 Using browser TTS fallback')
+        useBrowserTTS(data.message)
       } else {
-        throw new Error('No audio data received from ElevenLabs')
+        throw new Error('No audio data received')
       }
     } catch (err) {
-      console.error("❌ ElevenLabs failed for ThankYou:", err)
-      // Fallback to the passed speak function if ElevenLabs fails
+      console.error("❌ Fast endpoint failed:", err)
+      // Fallback to the passed speak function
       if (speak) {
-        console.log('🔄 Using fallback speak function')
-        speak("Thank you for recycling. Your action helps create a cleaner and greener future.")
+        console.log('🔄 Using original speak function')
+        speak("Thanks for recycling!")
       }
     }
   }

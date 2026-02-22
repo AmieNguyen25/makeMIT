@@ -1,0 +1,75 @@
+=== IMAGE CLASSIFICATION RESULTS ===
+Generated: 2026-02-21 22:04:04
+Classification Folder: Material-Based Image Classification
+Method: Gemini AI with Custom Material Prompt
+
+
+============================================================
+IMAGE 1: sortify-mit_camera-1_2026-02-21T22_18_19.156Z.jpg
+============================================================
+
+CLASSIFICATION RESULTS:
+----------------------
+Material Type: PAPER
+Processing Time: 1542 milliseconds
+Timestamp: 2026-02-21 22:04:04
+
+
+============================================================
+IMAGE 2: sortify-mit_camera-1_2026-02-21T23_18_04.822Z.jpg
+============================================================
+
+CLASSIFICATION RESULTS:
+----------------------
+Material Type: CAN
+Processing Time: 1555 milliseconds
+Timestamp: 2026-02-21 22:04:04
+
+
+============================================================
+IMAGE 3: WIN_20260221_15_35_17_Pro.jpg
+============================================================
+
+CLASSIFICATION RESULTS:
+----------------------
+Material Type: PLASTIC
+Processing Time: 1658 milliseconds
+Timestamp: 2026-02-21 22:04:04
+
+
+
+============================================================
+CLASSIFICATION SUMMARY
+============================================================
+
+📊 PROCESSING STATISTICS:
+------------------------
+Total Images Processed: 3
+Successful Classifications: 3
+Failed Classifications: 0
+Average Processing Time: 1585ms
+
+🎯 MATERIAL BREAKDOWN:
+---------------------
+• PAPER: 1 image(s)
+• CAN: 1 image(s)
+• PLASTIC: 1 image(s)
+
+
+📋 DETAILED RESULTS:
+-------------------
+✅ sortify-mit_camera-1_2026-02-21T22_18_19.156Z.jpg → PAPER
+✅ sortify-mit_camera-1_2026-02-21T23_18_04.822Z.jpg → CAN
+✅ WIN_20260221_15_35_17_Pro.jpg → PLASTIC
+
+
+🔧 CLASSIFICATION METHOD:
+------------------------
+✅ Material-based classification (not brand/label)
+✅ Categories: can, plastic, paper, glass
+✅ Texture and composition analysis
+✅ Single-word output format
+✅ AI-powered visual recognition
+
+=== END OF CLASSIFICATION REPORT ===
+Generated: 2026-02-21 22:04:09
