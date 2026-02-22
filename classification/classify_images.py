@@ -30,7 +30,7 @@ class SmartTrashBin:
             history=500, varThreshold=50, detectShadows=True
         )
         self.last_classification_time = 0
-        self.cooldown_period = 5.0  # 5 seconds
+        self.cooldown_period = 1.2  # 5 seconds
         self.motion_threshold = 5000  # Minimum contour area for motion detection
         
     def initialize_camera(self):
